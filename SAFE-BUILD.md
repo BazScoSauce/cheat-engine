@@ -1,6 +1,6 @@
 # Cheat Engine Safe Build
 
-This branch creates a private, clean Windows build from the public Cheat Engine source in this repository.
+This branch creates a private, clean 64-bit Windows build from the public Cheat Engine source in this repository.
 
 ## Safety profile
 
@@ -17,14 +17,15 @@ The package is intended for normal user-mode, offline/single-player debugging an
 ## What is built
 
 - Cheat Engine 64-bit, Release mode
-- Cheat Engine 32-bit, Release mode
 - Portable ZIP
 - Standard uninstallable Windows installer
 - SHA-256 checksums for the generated packages
 
+The build is x64-only to keep the package simpler and avoid installing the separate 32-bit cross-compiler during CI.
+
 ## Downloading a build
 
-Open the repository's Actions tab, select **Build Safe Windows Package**, open the latest successful run, then download the **Cheat-Engine-Safe-Windows** artifact. The artifact contains both the installer and portable ZIP.
+Open the repository's Actions tab, select **Build Safe Windows Package**, open the latest successful run, then download the **Cheat-Engine-Safe-Windows-x64** artifact. The artifact contains both the installer and portable ZIP.
 
 ## Important notes
 
