@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: safe-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build clean x64 user-mode package
@@ -19,12 +23,23 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install Lazarus 2.2.2
+      - name: Download and install verified Lazarus 2.2.2
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install lazarus --version=2.2.2 --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'Lazarus 2.2.2 installation failed' }
+          $url = 'https://download.lazarus-ide.org/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2/lazarus-2.2.2-fpc-3.2.2-win64.exe'
+          $installer = Join-Path $env:RUNNER_TEMP 'lazarus-2.2.2-fpc-3.2.2-win64.exe'
+          $expected = '3AECCE3F12F9C1824DCB149142ABFBAEE4E162A2624E62CB0ECD9B7C2142B7E3'
+
+          curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 -o $installer $url
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to download Lazarus 2.2.2 from the official Lazarus mirror' }
+
+          $actual = (Get-FileHash -Path $installer -Algorithm SHA256).Hash.ToUpperInvariant()
+          Write-Host "Lazarus SHA256: $actual"
+          if ($actual -ne $expected) { throw "Lazarus checksum mismatch. Expected $expected, got $actual" }
+
+          $proc = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/DIR=C:\lazarus') -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "Lazarus installer exited with code $($proc.ExitCode)" }
           if (-not (Test-Path 'C:\lazarus\lazbuild.exe')) { throw 'C:\lazarus\lazbuild.exe was not installed' }
           & 'C:\lazarus\lazbuild.exe' --version
 
