@@ -1,38 +1,41 @@
 # Cheat Engine Safe Build
 
-This branch creates a private, clean 64-bit Windows build from the public Cheat Engine source in this repository.
+This branch creates a private, minimal 64-bit Windows build from the public Cheat Engine source in this repository.
 
 ## Safety profile
 
-The packaging workflow intentionally excludes:
+The final package uses an explicit allowlist. It contains only:
 
-- Windows kernel driver files (`*.sys`)
-- DBK kernel-mode helper files
-- DBVM files
-- `ceserver` binaries
-- third-party bundled/recommended software
+- `cheatengine-x86_64.exe`
+- `lua53-64.dll`
+- `BUILD-INFO.txt`
 
-The package is intended for normal user-mode, offline/single-player debugging and modding.
+The build intentionally omits the normal `bin` directory extras, including autorun scripts, Java/.NET agents, injection helpers, Direct3D/overlay hook DLLs, 32-bit helpers, DBK kernel drivers, DBVM, `ceserver`, the tiny compiler/include tree, bundled Lua command-line executables, and third-party installer offers.
 
-## What is built
+This means some advanced Cheat Engine features will not be available. The goal of this branch is a small user-mode build for basic offline/single-player memory scanning and editing.
 
-- Cheat Engine 64-bit, Release mode
-- Portable ZIP
-- Standard uninstallable Windows installer
-- SHA-256 checksums for the generated packages
+## Packaging
 
-The build is x64-only to keep the package simpler and avoid installing the separate 32-bit cross-compiler during CI.
+The installable package is a standard Windows Installer (`.msi`) created with WiX Toolset 3.14.1. It no longer uses the Inno Setup EXE wrapper that triggered a `Trojan:Win32/Malgent` detection on an `is-*.tmp` installer temporary file.
 
-## Downloading a build
+The MSI installs per-user under Local AppData and creates a Start Menu shortcut. It does not contain custom actions or scripts that execute during installation.
 
-Open the repository's Actions tab, select **Build Safe Windows Package**, open the latest successful run, then download the **Cheat-Engine-Safe-Windows-x64** artifact. The artifact contains both the installer and portable ZIP.
+A portable ZIP containing the same three files is also produced.
+
+## Build chain
+
+- Lazarus 2.2.2 / FPC 3.2.2 x64
+- Lazarus installer downloaded from the official Lazarus mirror and SHA-256 verified before use
+- WiX Toolset 3.14.1 for MSI creation
+- GitHub Actions Windows Server 2022 runner
+- SHA-256 checksums generated for final artifacts
 
 ## Important notes
 
-This repository currently contains the public 7.5-era source, not the full current 7.7 source.
+This repository contains the public 7.5-era source, not the full current 7.7 source.
 
-Cheat Engine performs memory inspection, debugging and process manipulation. Antivirus products and Microsoft Defender can therefore flag a self-built copy even when it was compiled directly from the source in this repository. A detection is not, by itself, proof that the build contains malware.
+Removing optional helpers does not make Cheat Engine inherently benign. The main executable is specifically designed to inspect and modify other processes' memory. Microsoft Defender or another antivirus may therefore still classify the actual Cheat Engine executable as a hacking/debugging tool or malware-like program.
 
-The installer produced by this branch is not digitally signed, so Windows SmartScreen may warn that the publisher is unknown.
+If Defender flags the new MSI or the installed `cheatengine-x86_64.exe`, do not automatically whitelist it. Check which exact file is detected first.
 
-No attempt is made to build, package or enable the DBK kernel driver or DBVM.
+The MSI is not digitally signed, so Windows may report an unknown publisher.
