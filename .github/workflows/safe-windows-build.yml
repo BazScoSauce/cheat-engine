@@ -11,44 +11,33 @@ permissions:
 
 jobs:
   build:
-    name: Build clean user-mode package
+    name: Build clean x64 user-mode package
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Download and install Lazarus 2.2.2
+      - name: Install Lazarus 2.2.2
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $base = 'https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2'
-          $main = Join-Path $env:RUNNER_TEMP 'lazarus-main.exe'
-          $cross = Join-Path $env:RUNNER_TEMP 'lazarus-cross.exe'
+          choco install lazarus --version=2.2.2 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Lazarus 2.2.2 installation failed' }
+          if (-not (Test-Path 'C:\lazarus\lazbuild.exe')) { throw 'C:\lazarus\lazbuild.exe was not installed' }
+          & 'C:\lazarus\lazbuild.exe' --version
 
-          curl.exe -L --fail --retry 3 --retry-delay 5 -o $main "$base/lazarus-2.2.2-fpc-3.2.2-win64.exe/download"
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to download Lazarus 2.2.2' }
-
-          curl.exe -L --fail --retry 3 --retry-delay 5 -o $cross "$base/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download"
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to download the Lazarus 32-bit cross compiler' }
-
-          Start-Process -FilePath $main -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\lazarus') -Wait
-          Start-Process -FilePath $cross -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\lazarus') -Wait
-
-          if (-not (Test-Path 'C:\lazarus\lazbuild.exe')) { throw 'lazbuild.exe was not installed' }
-
-      - name: Build 32-bit and 64-bit release executables
+      - name: Build 64-bit release executable
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & 'C:\lazarus\lazbuild.exe' '--build-mode=Release 32-Bit' 'Cheat Engine\cheatengine.lpi'
-          if ($LASTEXITCODE -ne 0) { throw '32-bit Cheat Engine build failed' }
-
-          & 'C:\lazarus\lazbuild.exe' '--build-mode=Release 64-Bit' 'Cheat Engine\cheatengine.lpi'
+          & 'C:\lazarus\lazbuild.exe' '--build-mode=Release 64-Bit' --build-all 'Cheat Engine\cheatengine.lpi'
           if ($LASTEXITCODE -ne 0) { throw '64-bit Cheat Engine build failed' }
 
           if (-not (Test-Path 'Cheat Engine\bin\cheatengine-x86_64.exe')) {
+            Write-Host 'Contents of Cheat Engine\bin:'
+            Get-ChildItem 'Cheat Engine\bin' -Recurse | Select-Object FullName
             throw 'Expected 64-bit executable was not produced'
           }
 
@@ -61,7 +50,7 @@ jobs:
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item 'Cheat Engine\bin\*' $stage -Recurse -Force
 
-          # This build deliberately excludes kernel/DBVM and remote-server components.
+          # Remove kernel-mode, hypervisor and remote-server material from the installable package.
           Get-ChildItem $stage -Recurse -File | Where-Object {
             $_.Extension -ieq '.sys' -or
             $_.Name -match '(?i)^dbk' -or
@@ -81,7 +70,7 @@ jobs:
           }
 
           @"
-          Cheat Engine Safe Build
+          Cheat Engine Safe Build - x64
           Source branch: $env:GITHUB_REF_NAME
           Source commit: $env:GITHUB_SHA
           Built by GitHub Actions from the public source in this repository.
@@ -101,7 +90,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path 'dist' -Force | Out-Null
-          Compress-Archive -Path 'stage\*' -DestinationPath 'dist\Cheat-Engine-Safe-Portable.zip' -CompressionLevel Optimal -Force
+          Compress-Archive -Path 'stage\*' -DestinationPath 'dist\Cheat-Engine-Safe-x64-Portable.zip' -CompressionLevel Optimal -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -134,7 +123,7 @@ jobs:
       - name: Upload installable packages
         uses: actions/upload-artifact@v4
         with:
-          name: Cheat-Engine-Safe-Windows
+          name: Cheat-Engine-Safe-Windows-x64
           path: dist/*
           if-no-files-found: error
           retention-days: 30
