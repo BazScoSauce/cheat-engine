@@ -1,4 +1,4 @@
-name: Build Safe Windows Package
+name: Build Minimal Safe Windows Package
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build clean x64 user-mode package
+    name: Build minimal x64 user-mode MSI
     runs-on: windows-2022
     timeout-minutes: 30
 
@@ -43,85 +43,108 @@ jobs:
           if (-not (Test-Path 'C:\lazarus\lazbuild.exe')) { throw 'C:\lazarus\lazbuild.exe was not installed' }
           & 'C:\lazarus\lazbuild.exe' --version
 
-      - name: Build 64-bit release executable
+      - name: Build 64-bit Cheat Engine
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           & 'C:\lazarus\lazbuild.exe' '--build-mode=Release 64-Bit' --build-all 'Cheat Engine\cheatengine.lpi'
           if ($LASTEXITCODE -ne 0) { throw '64-bit Cheat Engine build failed' }
 
-          if (-not (Test-Path 'Cheat Engine\bin\cheatengine-x86_64.exe')) {
-            Write-Host 'Contents of Cheat Engine\bin:'
-            Get-ChildItem 'Cheat Engine\bin' -Recurse | Select-Object FullName
-            throw 'Expected 64-bit executable was not produced'
+          foreach ($required in @(
+            'Cheat Engine\bin\cheatengine-x86_64.exe',
+            'Cheat Engine\bin\lua53-64.dll'
+          )) {
+            if (-not (Test-Path $required)) { throw "Expected build output was not produced: $required" }
           }
 
-      - name: Create safe staging directory
+      - name: Create minimal staging directory
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $stage = Join-Path $PWD 'stage'
           if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item 'Cheat Engine\bin\*' $stage -Recurse -Force
 
-          # Remove kernel-mode, hypervisor and remote-server material from the installable package.
-          Get-ChildItem $stage -Recurse -File | Where-Object {
-            $_.Extension -ieq '.sys' -or
-            $_.Name -match '(?i)^dbk' -or
-            $_.Name -match '(?i)dbvm' -or
-            $_.Name -match '(?i)^ceserver'
-          } | Remove-Item -Force
-
-          $forbidden = Get-ChildItem $stage -Recurse -File | Where-Object {
-            $_.Extension -ieq '.sys' -or
-            $_.Name -match '(?i)^dbk' -or
-            $_.Name -match '(?i)dbvm' -or
-            $_.Name -match '(?i)^ceserver'
-          }
-          if ($forbidden) {
-            $forbidden | ForEach-Object { Write-Error "Forbidden file remains: $($_.FullName)" }
-            throw 'Safety packaging check failed'
-          }
+          # Allowlist only the main x64 executable and its directly imported Lua runtime.
+          # No autorun scripts, injectors, hook DLLs, kernel drivers, DBVM, ceserver,
+          # Java/.NET agents, D3D hooks, tiny compiler, 32-bit helpers or bundled tools.
+          Copy-Item 'Cheat Engine\bin\cheatengine-x86_64.exe' $stage
+          Copy-Item 'Cheat Engine\bin\lua53-64.dll' $stage
 
           @"
-          Cheat Engine Safe Build - x64
+          Cheat Engine Safe Build - minimal x64
           Source branch: $env:GITHUB_REF_NAME
           Source commit: $env:GITHUB_SHA
           Built by GitHub Actions from the public source in this repository.
 
-          Deliberately excluded from this package:
+          Package allowlist:
+          - cheatengine-x86_64.exe
+          - lua53-64.dll
+          - BUILD-INFO.txt
+
+          Intentionally omitted:
+          - autorun scripts and autorun DLLs
+          - .NET/Java injection and agent components
+          - Direct3D/overlay hook DLLs
           - Windows kernel drivers (*.sys)
           - DBK kernel-mode helpers
           - DBVM files
           - ceserver binaries
+          - 32-bit helper components
+          - bundled command-line Lua executables
+          - tiny compiler/include tree
           - bundled/recommended third-party installer software
 
-          This is an unsigned private source build. Antivirus/SmartScreen warnings are possible because Cheat Engine inspects and modifies process memory.
+          This is an unsigned private source build. Microsoft Defender may still classify
+          the main Cheat Engine executable because it reads and modifies process memory.
           "@ | Set-Content -Path (Join-Path $stage 'BUILD-INFO.txt') -Encoding UTF8
+
+          $names = @(Get-ChildItem $stage -File | Sort-Object Name | Select-Object -ExpandProperty Name)
+          $expectedNames = @('BUILD-INFO.txt','cheatengine-x86_64.exe','lua53-64.dll')
+          if (($names -join '|') -ne ($expectedNames -join '|')) {
+            Write-Host "Actual package files: $($names -join ', ')"
+            throw 'Minimal package allowlist check failed'
+          }
+
+          Write-Host 'Final package contents:'
+          Get-ChildItem $stage -File | Select-Object Name,Length
 
       - name: Create portable ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path 'dist' -Force | Out-Null
-          Compress-Archive -Path 'stage\*' -DestinationPath 'dist\Cheat-Engine-Safe-x64-Portable.zip' -CompressionLevel Optimal -Force
+          Compress-Archive -Path 'stage\*' -DestinationPath 'dist\Cheat-Engine-Safe-Minimal-x64-Portable.zip' -CompressionLevel Optimal -Force
 
-      - name: Install Inno Setup
+      - name: Install WiX Toolset 3.14.1
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install innosetup --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          choco install wixtoolset --version=3.14.1.20250415 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'WiX Toolset installation failed' }
 
-      - name: Build Windows installer
+          $wix = Get-ChildItem "${env:ProgramFiles(x86)}" -Directory -Filter 'WiX Toolset v3*' |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $wix) { throw 'WiX Toolset directory was not found' }
+          $bin = Join-Path $wix.FullName 'bin'
+          if (-not (Test-Path (Join-Path $bin 'candle.exe'))) { throw 'candle.exe was not found' }
+          if (-not (Test-Path (Join-Path $bin 'light.exe'))) { throw 'light.exe was not found' }
+          "WIX_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build MSI
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw 'ISCC.exe was not found' }
-          & $iscc 'safe-ce.iss'
-          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+          & "$env:WIX_BIN\candle.exe" -nologo -arch x64 -out 'dist\safe-ce.wixobj' 'safe-ce.wxs'
+          if ($LASTEXITCODE -ne 0) { throw 'WiX candle compilation failed' }
+
+          & "$env:WIX_BIN\light.exe" -nologo -sval -out 'dist\Cheat-Engine-Safe-Minimal-x64.msi' 'dist\safe-ce.wixobj'
+          if ($LASTEXITCODE -ne 0) { throw 'WiX light linking failed' }
+
+          Remove-Item 'dist\safe-ce.wixobj' -Force -ErrorAction SilentlyContinue
+          Remove-Item 'dist\Cheat-Engine-Safe-Minimal-x64.wixpdb' -Force -ErrorAction SilentlyContinue
+
+          if (-not (Test-Path 'dist\Cheat-Engine-Safe-Minimal-x64.msi')) { throw 'MSI was not produced' }
 
       - name: Generate package hashes
         shell: pwsh
@@ -138,7 +161,7 @@ jobs:
       - name: Upload installable packages
         uses: actions/upload-artifact@v4
         with:
-          name: Cheat-Engine-Safe-Windows-x64
+          name: Cheat-Engine-Safe-Minimal-Windows-x64
           path: dist/*
           if-no-files-found: error
           retention-days: 30
