@@ -22,6 +22,10 @@ The package is intended for normal user-mode, offline/single-player debugging an
 - Standard uninstallable Windows installer
 - SHA-256 checksums for the generated packages
 
+## Downloading a build
+
+Open the repository's Actions tab, select **Build Safe Windows Package**, open the latest successful run, then download the **Cheat-Engine-Safe-Windows** artifact. The artifact contains both the installer and portable ZIP.
+
 ## Important notes
 
 This repository currently contains the public 7.5-era source, not the full current 7.7 source.
