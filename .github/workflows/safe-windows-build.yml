@@ -1,0 +1,140 @@
+name: Build Safe Windows Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - safe-build
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build clean user-mode package
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download and install Lazarus 2.2.2
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://sourceforge.net/projects/lazarus/files/Lazarus%20Windows%2064%20bits/Lazarus%202.2.2'
+          $main = Join-Path $env:RUNNER_TEMP 'lazarus-main.exe'
+          $cross = Join-Path $env:RUNNER_TEMP 'lazarus-cross.exe'
+
+          curl.exe -L --fail --retry 3 --retry-delay 5 -o $main "$base/lazarus-2.2.2-fpc-3.2.2-win64.exe/download"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to download Lazarus 2.2.2' }
+
+          curl.exe -L --fail --retry 3 --retry-delay 5 -o $cross "$base/lazarus-2.2.2-fpc-3.2.2-cross-i386-win32-win64.exe/download"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to download the Lazarus 32-bit cross compiler' }
+
+          Start-Process -FilePath $main -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\lazarus') -Wait
+          Start-Process -FilePath $cross -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\lazarus') -Wait
+
+          if (-not (Test-Path 'C:\lazarus\lazbuild.exe')) { throw 'lazbuild.exe was not installed' }
+
+      - name: Build 32-bit and 64-bit release executables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & 'C:\lazarus\lazbuild.exe' '--build-mode=Release 32-Bit' 'Cheat Engine\cheatengine.lpi'
+          if ($LASTEXITCODE -ne 0) { throw '32-bit Cheat Engine build failed' }
+
+          & 'C:\lazarus\lazbuild.exe' '--build-mode=Release 64-Bit' 'Cheat Engine\cheatengine.lpi'
+          if ($LASTEXITCODE -ne 0) { throw '64-bit Cheat Engine build failed' }
+
+          if (-not (Test-Path 'Cheat Engine\bin\cheatengine-x86_64.exe')) {
+            throw 'Expected 64-bit executable was not produced'
+          }
+
+      - name: Create safe staging directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $PWD 'stage'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item 'Cheat Engine\bin\*' $stage -Recurse -Force
+
+          # This build deliberately excludes kernel/DBVM and remote-server components.
+          Get-ChildItem $stage -Recurse -File | Where-Object {
+            $_.Extension -ieq '.sys' -or
+            $_.Name -match '(?i)^dbk' -or
+            $_.Name -match '(?i)dbvm' -or
+            $_.Name -match '(?i)^ceserver'
+          } | Remove-Item -Force
+
+          $forbidden = Get-ChildItem $stage -Recurse -File | Where-Object {
+            $_.Extension -ieq '.sys' -or
+            $_.Name -match '(?i)^dbk' -or
+            $_.Name -match '(?i)dbvm' -or
+            $_.Name -match '(?i)^ceserver'
+          }
+          if ($forbidden) {
+            $forbidden | ForEach-Object { Write-Error "Forbidden file remains: $($_.FullName)" }
+            throw 'Safety packaging check failed'
+          }
+
+          @"
+          Cheat Engine Safe Build
+          Source branch: $env:GITHUB_REF_NAME
+          Source commit: $env:GITHUB_SHA
+          Built by GitHub Actions from the public source in this repository.
+
+          Deliberately excluded from this package:
+          - Windows kernel drivers (*.sys)
+          - DBK kernel-mode helpers
+          - DBVM files
+          - ceserver binaries
+          - bundled/recommended third-party installer software
+
+          This is an unsigned private source build. Antivirus/SmartScreen warnings are possible because Cheat Engine inspects and modifies process memory.
+          "@ | Set-Content -Path (Join-Path $stage 'BUILD-INFO.txt') -Encoding UTF8
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path 'dist' -Force | Out-Null
+          Compress-Archive -Path 'stage\*' -DestinationPath 'dist\Cheat-Engine-Safe-Portable.zip' -CompressionLevel Optimal -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe was not found' }
+          & $iscc 'safe-ce.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+
+      - name: Generate package hashes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem 'dist' -File | Sort-Object Name
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content 'dist\SHA256SUMS.txt' -Encoding ASCII
+          Get-Content 'dist\SHA256SUMS.txt'
+
+      - name: Upload installable packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cheat-Engine-Safe-Windows
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
