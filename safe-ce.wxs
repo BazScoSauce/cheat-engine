@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Cheat Engine Safe Build"
+           Language="1033"
+           Version="7.5.0.0"
+           Manufacturer="Private source build"
+           UpgradeCode="{B784E398-4E13-46E7-B2FC-2C78E74C83DB}">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perUser"
+             Platform="x64"
+             Description="Minimal user-mode build of Cheat Engine from public source" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Cheat Engine Safe Build is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDir" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="Cheat Engine Safe Build" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Cheat Engine Safe Build" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="CoreFiles" Guid="*" Win64="yes">
+        <File Id="CheatEngineExe" Source="stage\cheatengine-x86_64.exe" KeyPath="yes" />
+        <File Id="LuaDll" Source="stage\lua53-64.dll" />
+        <File Id="BuildInfo" Source="stage\BUILD-INFO.txt" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="*">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="Cheat Engine Safe Build"
+                  Description="Launch Cheat Engine Safe Build"
+                  Target="[INSTALLFOLDER]cheatengine-x86_64.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\BazScoSauce\CheatEngineSafeBuild"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="Cheat Engine Safe Build" Level="1">
+      <ComponentRef Id="CoreFiles" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+  </Product>
+</Wix>
